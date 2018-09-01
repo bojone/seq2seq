@@ -119,14 +119,18 @@ embedding = Embedding(len(chars)+4, char_size)
 x = embedding(x)
 y = embedding(y)
 
+# encoder，双层双向LSTM
 x = Bidirectional(CuDNNLSTM(char_size/2, return_sequences=True))(x)
 x = Bidirectional(CuDNNLSTM(char_size/2, return_sequences=True))(x)
 
+# decoder，双层单向LSTM
 y = CuDNNLSTM(char_size, return_sequences=True)(y)
 y = CuDNNLSTM(char_size, return_sequences=True)(y)
 
 
 class Interact(Layer):
+    """交互层，负责融合encoder和decoder的信息
+    """
     def __init__(self, **kwargs):
         super(Interact, self).__init__(**kwargs)
     def build(self, input_shape):
@@ -159,7 +163,6 @@ xy = Dense(len(chars)+4)(xy)
 xy = Lambda(lambda x: (x[0]+x[1])/2)([xy, x_prior]) # 与先验结果平均
 xy = Activation('softmax')(xy)
 
-
 # 交叉熵作为loss，但mask掉padding部分
 cross_entropy = K.sparse_categorical_crossentropy(y_in[:, 1:], xy[:, :-1])
 loss = K.sum(cross_entropy * y_mask[:, 1:, 0]) / K.sum(y_mask[:, 1:, 0])
@@ -167,11 +170,6 @@ loss = K.sum(cross_entropy * y_mask[:, 1:, 0]) / K.sum(y_mask[:, 1:, 0])
 model = Model([x_in, y_in], xy)
 model.add_loss(loss)
 model.compile(optimizer=Adam(1e-3))
-
-
-
-s1 = u'夏天来临，皮肤在强烈紫外线的照射下，晒伤不可避免，因此，晒后及时修复显得尤为重要，否则可能会造成长期伤害。专家表示，选择晒后护肤品要慎重，芦荟凝胶是最安全，有效的一种选择，晒伤严重者，还请及时就医。'
-s2 = u'8月28日，网络爆料称，华住集团旗下连锁酒店用户数据疑似发生泄露。从卖家发布的内容看，数据包含华住旗下汉庭、禧玥、桔子、宜必思等10余个品牌酒店的住客信息。泄露的信息包括华住官网注册资料、酒店入住登记的身份信息及酒店开房记录，住客姓名、手机号、邮箱、身份证号、登录账号密码等。卖家对这个约5亿条数据打包出售。第三方安全平台威胁猎人对信息出售者提供的三万条数据进行验证，认为数据真实性非常高。当天下午，华住集团发声明称，已在内部迅速开展核查，并第一时间报警。当晚，上海警方消息称，接到华住集团报案，警方已经介入调查。'
 
 
 def gen_title(s, topk=3):
@@ -211,6 +209,9 @@ def gen_title(s, topk=3):
     # 如果50字都找不到<end>，直接返回
     return id2str(yid[np.argmax(scores)])
 
+
+s1 = u'夏天来临，皮肤在强烈紫外线的照射下，晒伤不可避免，因此，晒后及时修复显得尤为重要，否则可能会造成长期伤害。专家表示，选择晒后护肤品要慎重，芦荟凝胶是最安全，有效的一种选择，晒伤严重者，还请及时就医。'
+s2 = u'8月28日，网络爆料称，华住集团旗下连锁酒店用户数据疑似发生泄露。从卖家发布的内容看，数据包含华住旗下汉庭、禧玥、桔子、宜必思等10余个品牌酒店的住客信息。泄露的信息包括华住官网注册资料、酒店入住登记的身份信息及酒店开房记录，住客姓名、手机号、邮箱、身份证号、登录账号密码等。卖家对这个约5亿条数据打包出售。第三方安全平台威胁猎人对信息出售者提供的三万条数据进行验证，认为数据真实性非常高。当天下午，华住集团发声明称，已在内部迅速开展核查，并第一时间报警。当晚，上海警方消息称，接到华住集团报案，警方已经介入调查。'
 
 class Evaluate(Callback):
     def __init__(self):
