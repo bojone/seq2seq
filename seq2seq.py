@@ -17,7 +17,7 @@ maxlen = 400
 batch_size = 64
 epochs = 10
 char_size = 128
-db = pymongo.MongoClient().text.thucnews
+db = pymongo.MongoClient().text.news # 我的数据存在mongodb中
 
 
 if os.path.exists('seq2seq_config.json'):
