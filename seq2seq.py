@@ -15,7 +15,7 @@ from keras.optimizers import Adam
 min_count = 32
 maxlen = 400
 batch_size = 64
-epochs = 10
+epochs = 100
 char_size = 128
 db = pymongo.MongoClient().text.news # 我的数据存在mongodb中
 
@@ -229,6 +229,6 @@ evaluator = Evaluate()
 
 model.fit_generator(data_generator(),
                     steps_per_epoch=1000,
-                    epochs=1000,
+                    epochs=epochs,
                     callbacks=[evaluator])
 
