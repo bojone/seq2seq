@@ -42,7 +42,7 @@ else:
 
 def str2id(s, start_end=False):
     # 文字转整数id
-    if start_end: # 补上<start>and<end>标记
+    if start_end: # 补上<start>和<end>标记
         ids = [char2id.get(c, 1) for c in s[:maxlen-2]]
         ids = [2] + ids + [3]
     else: # 普通转化
