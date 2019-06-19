@@ -197,15 +197,12 @@ def gen_title(s, topk=3):
             _arg_topk = np.argsort(_scores)[-topk:] # 从中选出新的topk
             _yid = [_yid[k] for k in _arg_topk]
             _scores = [_scores[k] for k in _arg_topk]
-        yid = []
-        scores = []
-        for k in range(len(xid)):
-            if _yid[k][-1] == 3: # 找到<end>就返回
-                return id2str(_yid[k])
-            else:
-                yid.append(_yid[k])
-                scores.append(_scores[k])
-        yid = np.array(yid)
+        yid = np.array(_yid)
+        scores = np.array(scores)
+        ends = np.where(yid[:, -1] == 3)[0]
+        if len(ends) > 0:
+            k = ends[scores[ends].argmax()]
+            return id2str(yid[k])
     # 如果50字都找不到<end>，直接返回
     return id2str(yid[np.argmax(scores)])
 
