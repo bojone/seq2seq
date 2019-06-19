@@ -190,7 +190,7 @@ def gen_title(s, topk=3, maxlen=50):
                 _yid.append(list(yid[j]) + [arg_topk[0][j]+3])
                 _scores.append(scores[j] + log_proba[0][arg_topk[0][j]])
         else:
-            for j in range(len(xid)):
+            for j in range(topk):
                 for k in range(topk): # 遍历topk*topk的组合
                     _yid.append(list(yid[j]) + [arg_topk[j][k]+3])
                     _scores.append(scores[j] + log_proba[j][arg_topk[j][k]])
