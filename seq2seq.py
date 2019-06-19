@@ -81,10 +81,8 @@ x_in = Input(shape=(None,))
 y_in = Input(shape=(None,))
 x, y = x_in, y_in
 
-
 x_mask = Lambda(lambda x: K.cast(K.greater(K.expand_dims(x, 2), 0), 'float32'))(x)
 y_mask = Lambda(lambda x: K.cast(K.greater(K.expand_dims(x, 2), 0), 'float32'))(y)
-
 
 def to_one_hot(x): # 输出一个词表大小的向量，来标记该词是否在文章出现过
     x, x_mask = x
@@ -93,7 +91,6 @@ def to_one_hot(x): # 输出一个词表大小的向量，来标记该词是否�
     x = K.sum(x_mask * x, 1, keepdims=True)
     x = K.cast(K.greater(x, 0.5), 'float32')
     return x
-
 
 class ScaleShift(Layer):
     """缩放平移变换层（Scale and shift）
@@ -112,7 +109,6 @@ class ScaleShift(Layer):
         x_outs = K.exp(self.log_scale) * inputs + self.shift
         return x_outs
 
-
 x_one_hot = Lambda(to_one_hot)([x, x_mask])
 x_prior = ScaleShift()(x_one_hot) # 学习输出的先验分布（标题的字词很可能在文章出现过）
 
@@ -127,7 +123,6 @@ x = Bidirectional(CuDNNLSTM(char_size/2, return_sequences=True))(x)
 # decoder，双层单向LSTM
 y = CuDNNLSTM(char_size, return_sequences=True)(y)
 y = CuDNNLSTM(char_size, return_sequences=True)(y)
-
 
 class Interact(Layer):
     """交互层，负责融合encoder和decoder的信息
@@ -156,7 +151,6 @@ class Interact(Layer):
     def compute_output_shape(self, input_shape):
         return (None, input_shape[0][1],
                 input_shape[0][2]+input_shape[1][2]*2)
-
 
 xy = Interact()([y, x, x_mask])
 xy = Dense(512, activation='relu')(xy)
