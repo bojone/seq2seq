@@ -177,7 +177,7 @@ def gen_title(s, topk=3):
     每次只保留topk个最优候选结果；如果topk=1，那么就是贪心搜索
     """
     xid = np.array([str2id(s)] * topk) # 输入转id
-    yid = np.array([[2]] * topk) # 解码均以<start>开通，这里<start>的id为2
+    yid = np.array([[2]] * topk) # 解码均以<start>开头，这里<start>的id为2
     scores = [0] * topk # 候选答案分数
     for i in range(50): # 强制要求标题不超过50字
         proba = model.predict([xid, yid])[:, i, 3:] # 直接忽略<padding>、<unk>、<start>
