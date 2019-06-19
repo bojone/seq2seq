@@ -198,7 +198,7 @@ def gen_title(s, topk=3):
             _yid = [_yid[k] for k in _arg_topk]
             _scores = [_scores[k] for k in _arg_topk]
         yid = np.array(_yid)
-        scores = np.array(scores)
+        scores = np.array(_scores)
         ends = np.where(yid[:, -1] == 3)[0]
         if len(ends) > 0:
             k = ends[scores[ends].argmax()]
