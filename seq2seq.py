@@ -172,14 +172,14 @@ model.add_loss(loss)
 model.compile(optimizer=Adam(1e-3))
 
 
-def gen_title(s, topk=3):
+def gen_title(s, topk=3, maxlen=50):
     """beam search解码
     每次只保留topk个最优候选结果；如果topk=1，那么就是贪心搜索
     """
     xid = np.array([str2id(s)] * topk) # 输入转id
     yid = np.array([[2]] * topk) # 解码均以<start>开头，这里<start>的id为2
     scores = [0] * topk # 候选答案分数
-    for i in range(50): # 强制要求标题不超过50字
+    for i in range(maxlen): # 强制要求标题不超过maxlen字
         proba = model.predict([xid, yid])[:, i, 3:] # 直接忽略<padding>、<unk>、<start>
         log_proba = np.log(proba + 1e-6) # 取对数，方便计算
         arg_topk = log_proba.argsort(axis=1)[:,-topk:] # 每一项选出topk
@@ -203,7 +203,7 @@ def gen_title(s, topk=3):
         if len(ends) > 0:
             k = ends[scores[ends].argmax()]
             return id2str(yid[k])
-    # 如果50字都找不到<end>，直接返回
+    # 如果maxlen字都找不到<end>，直接返回
     return id2str(yid[np.argmax(scores)])
 
 
