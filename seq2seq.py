@@ -117,8 +117,8 @@ x = embedding(x)
 y = embedding(y)
 
 # encoder，双层双向LSTM
-x = Bidirectional(CuDNNLSTM(char_size/2, return_sequences=True))(x)
-x = Bidirectional(CuDNNLSTM(char_size/2, return_sequences=True))(x)
+x = Bidirectional(CuDNNLSTM(char_size // 2, return_sequences=True))(x)
+x = Bidirectional(CuDNNLSTM(char_size // 2, return_sequences=True))(x)
 
 # decoder，双层单向LSTM
 y = CuDNNLSTM(char_size, return_sequences=True)(y)
