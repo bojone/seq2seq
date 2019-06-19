@@ -79,8 +79,9 @@ def data_generator():
 
 x_in = Input(shape=(None,))
 y_in = Input(shape=(None,))
-x = x_in
-y = y_in
+x, y = x_in, y_in
+
+
 x_mask = Lambda(lambda x: K.cast(K.greater(K.expand_dims(x, 2), 0), 'float32'))(x)
 y_mask = Lambda(lambda x: K.cast(K.greater(K.expand_dims(x, 2), 0), 'float32'))(y)
 
