@@ -109,7 +109,7 @@ class ScaleShift(Layer):
     def __init__(self, **kwargs):
         super(ScaleShift, self).__init__(**kwargs)
     def build(self, input_shape):
-        kernel_shape = (1,)*(len(input_shape)-1) + (input_shape[-1],)
+        kernel_shape = (1,) * (len(input_shape)-1) + (input_shape[-1],)
         self.log_scale = self.add_weight(name='log_scale',
                                          shape=kernel_shape,
                                          initializer='zeros')
@@ -126,7 +126,6 @@ class OurLayer(Layer):
     """
     def reuse(self, layer, *args, **kwargs):
         if not layer.built:
-            layer.name = '%s_for_%s' % (layer.name, self.name)
             if len(args) > 0:
                 layer.build(K.int_shape(args[0]))
             else:
