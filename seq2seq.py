@@ -75,6 +75,21 @@ def data_generator():
                 X,Y = [],[]
 
 
+class OurLayer(Layer):
+    """定义新的Layer，增加reuse方法，允许在定义Layer时调用现成的层
+    """
+    def reuse(self, layer, *args, **kwargs):
+        if not layer.built:
+            layer.name = '%s_for_%s' % (layer.name, self.name)
+            if len(args) > 0:
+                layer.build(K.int_shape(args[0]))
+            else:
+                layer.build(K.int_shape(kwargs['inputs']))
+            self._trainable_weights.extend(layer._trainable_weights)
+            self._non_trainable_weights.extend(layer._non_trainable_weights)
+        return layer.call(*args, **kwargs)
+
+ 
 def to_one_hot(x):
     """输出一个词表大小的向量，来标记该词是否在文章出现过
     """
@@ -104,55 +119,49 @@ class ScaleShift(Layer):
         return x_outs
 
 
-class MyBidirectional:
+class OurBidirectional(OurLayer):
     """自己封装双向RNN，允许传入mask，保证对齐
     """
-    def __init__(self, layer):
-        self.forward_layer = copy.copy(layer)
-        self.backward_layer = copy.copy(layer)
+    def __init__(self, layer, **args):
+        super(OurBidirectional, self).__init__(**args)
+        self.forward_layer = copy.deepcopy(layer)
+        self.backward_layer = copy.deepcopy(layer)
         self.forward_layer.name = 'forward_' + self.forward_layer.name
         self.backward_layer.name = 'backward_' + self.backward_layer.name
-    def reverse_sequence(self, inputs):
+    def reverse_sequence(self, x, mask):
         """这里的mask.shape是[batch_size, seq_len, 1]
         """
-        x, mask = inputs
         seq_len = K.round(K.sum(mask, 1)[:, 0])
         seq_len = K.cast(seq_len, 'int32')
         return K.tf.reverse_sequence(x, seq_len, seq_dim=1)
-    def __call__(self, inputs):
+    def call(self, inputs):
         x, mask = inputs
-        x_forward = self.forward_layer(x)
-        x_backward = Lambda(self.reverse_sequence)([x, mask])
-        x_backward = self.backward_layer(x_backward)
-        x_backward = Lambda(self.reverse_sequence)([x_backward, mask])
-        x = Concatenate()([x_forward, x_backward])
-        x = Lambda(lambda x: x[0] * x[1])([x, mask])
-        return x
+        x_forward = self.reuse(self.forward_layer, x)
+        x_backward = self.reverse_sequence(x, mask)
+        x_backward = self.reuse(self.backward_layer, x_backward)
+        x_backward = self.reverse_sequence(x_backward, mask)
+        x = K.concatenate([x_forward, x_backward], 2)
+        return x * mask
+    def compute_output_shape(self, input_shape):
+        return (None, input_shape[0][1], self.forward_layer.units * 2)
 
 
-class Attention(Layer):
+class Attention(OurLayer):
     """多头注意力机制
     """
-    def __init__(self, nb_head, size_per_head, mask_right=False, **kwargs):
+    def __init__(self, heads, size_per_head, key_size=None,
+                 mask_right=False, **kwargs):
         super(Attention, self).__init__(**kwargs)
-        self.nb_head = nb_head
+        self.heads = heads
         self.size_per_head = size_per_head
-        self.out_dim = nb_head * size_per_head
+        self.out_dim = heads * size_per_head
+        self.key_size = key_size if key_size else size_per_head
         self.mask_right = mask_right
     def build(self, input_shape):
         super(Attention, self).build(input_shape)
-        q_in_dim = input_shape[0][-1]
-        k_in_dim = input_shape[1][-1]
-        v_in_dim = input_shape[2][-1]
-        self.q_kernel = self.add_weight(name='q_kernel',
-                                        shape=(q_in_dim, self.out_dim),
-                                        initializer='glorot_normal')
-        self.k_kernel = self.add_weight(name='k_kernel',
-                                        shape=(k_in_dim, self.out_dim),
-                                        initializer='glorot_normal')
-        self.v_kernel = self.add_weight(name='w_kernel',
-                                        shape=(v_in_dim, self.out_dim),
-                                        initializer='glorot_normal')
+        self.q_dense = Dense(self.key_size * self.heads, use_bias=False)
+        self.k_dense = Dense(self.key_size * self.heads, use_bias=False)
+        self.v_dense = Dense(self.out_dim, use_bias=False)
     def mask(self, x, mask, mode='mul'):
         if mask is None:
             return x
@@ -170,20 +179,20 @@ class Attention(Layer):
             v_mask = inputs[3]
             if len(inputs) > 4:
                 q_mask = inputs[4]
-        # 线性变化
-        qw = K.dot(q, self.q_kernel)
-        kw = K.dot(k, self.k_kernel)
-        vw = K.dot(v, self.v_kernel)
+        # 线性变换
+        qw = self.reuse(self.q_dense, q)
+        kw = self.reuse(self.k_dense, k)
+        vw = self.reuse(self.v_dense, v)
         # 形状变换
-        qw = K.reshape(qw, (-1, K.shape(qw)[1], self.nb_head, self.size_per_head))
-        kw = K.reshape(kw, (-1, K.shape(kw)[1], self.nb_head, self.size_per_head))
-        vw = K.reshape(vw, (-1, K.shape(vw)[1], self.nb_head, self.size_per_head))
+        qw = K.reshape(qw, (-1, K.shape(qw)[1], self.heads, self.key_size))
+        kw = K.reshape(kw, (-1, K.shape(kw)[1], self.heads, self.key_size))
+        vw = K.reshape(vw, (-1, K.shape(vw)[1], self.heads, self.size_per_head))
         # 维度置换
         qw = K.permute_dimensions(qw, (0, 2, 1, 3))
         kw = K.permute_dimensions(kw, (0, 2, 1, 3))
         vw = K.permute_dimensions(vw, (0, 2, 1, 3))
         # Attention
-        a = K.batch_dot(qw, kw, [3, 3]) / self.size_per_head**0.5
+        a = K.batch_dot(qw, kw, [3, 3]) / self.key_size**0.5
         a = K.permute_dimensions(a, (0, 3, 2, 1))
         a = self.mask(a, v_mask, 'add')
         a = K.permute_dimensions(a, (0, 3, 2, 1))
@@ -229,8 +238,8 @@ x = embedding(x)
 y = embedding(y)
 
 # encoder，双层双向LSTM
-x = MyBidirectional(CuDNNLSTM(char_size // 2, return_sequences=True))([x, x_mask])
-x = MyBidirectional(CuDNNLSTM(char_size // 2, return_sequences=True))([x, x_mask])
+x = OurBidirectional(CuDNNLSTM(char_size // 2, return_sequences=True))([x, x_mask])
+x = OurBidirectional(CuDNNLSTM(char_size // 2, return_sequences=True))([x, x_mask])
 x_max = Lambda(seq_maxpool)([x, x_mask])
 
 # decoder，双层单向LSTM
