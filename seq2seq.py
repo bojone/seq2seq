@@ -318,21 +318,21 @@ xy = Activation('softmax')(xy)
 
 # 交叉熵作为loss，但mask掉padding部分
 cross_entropy = K.sparse_categorical_crossentropy(y_in[:, 1:], xy[:, :-1])
-loss = K.sum(cross_entropy * y_mask[:, 1:, 0]) / K.sum(y_mask[:, 1:, 0])
+cross_entropy = K.sum(cross_entropy * y_mask[:, 1:, 0]) / K.sum(y_mask[:, 1:, 0])
 
 model = Model([x_in, y_in], xy)
-model.add_loss(loss)
+model.add_loss(cross_entropy)
 model.compile(optimizer=Adam(1e-3))
 
 
-def gen_title(s, topk=3, maxlen=50):
+def gen_sent(s, topk=3, maxlen=50):
     """beam search解码
     每次只保留topk个最优候选结果；如果topk=1，那么就是贪心搜索
     """
     xid = np.array([str2id(s)] * topk) # 输入转id
     yid = np.array([[2]] * topk) # 解码均以<start>开头，这里<start>的id为2
     scores = [0] * topk # 候选答案分数
-    for i in range(maxlen): # 强制要求标题不超过maxlen字
+    for i in range(maxlen): # 强制要求输出不超过maxlen字
         proba = model.predict([xid, yid])[:, i, 3:] # 直接忽略<padding>、<unk>、<start>
         log_proba = np.log(proba + 1e-6) # 取对数，方便计算
         arg_topk = log_proba.argsort(axis=1)[:,-topk:] # 每一项选出topk
@@ -368,8 +368,8 @@ class Evaluate(Callback):
         self.lowest = 1e10
     def on_epoch_end(self, epoch, logs=None):
         # 训练过程中观察一两个例子，显示标题质量提高的过程
-        print gen_title(s1)
-        print gen_title(s2)
+        print gen_sent(s1)
+        print gen_sent(s2)
         # 保存最优结果
         if logs['loss'] <= self.lowest:
             self.lowest = logs['loss']
