@@ -17,7 +17,7 @@ maxlen = 400
 batch_size = 64
 epochs = 100
 char_size = 128
-db = pymongo.MongoClient().text.news # 我的数据存在mongodb中
+db = pymongo.MongoClient().text.thucnews # 我的数据存在mongodb中
 
 
 if os.path.exists('seq2seq_config.json'):
@@ -75,22 +75,16 @@ def data_generator():
                 X,Y = [],[]
 
 
-# 搭建seq2seq模型
-
-x_in = Input(shape=(None,))
-y_in = Input(shape=(None,))
-x, y = x_in, y_in
-
-x_mask = Lambda(lambda x: K.cast(K.greater(K.expand_dims(x, 2), 0), 'float32'))(x)
-y_mask = Lambda(lambda x: K.cast(K.greater(K.expand_dims(x, 2), 0), 'float32'))(y)
-
-def to_one_hot(x): # 输出一个词表大小的向量，来标记该词是否在文章出现过
+def to_one_hot(x):
+    """输出一个词表大小的向量，来标记该词是否在文章出现过
+    """
     x, x_mask = x
     x = K.cast(x, 'int32')
     x = K.one_hot(x, len(chars)+4)
     x = K.sum(x_mask * x, 1, keepdims=True)
     x = K.cast(K.greater(x, 0.5), 'float32')
     return x
+
 
 class ScaleShift(Layer):
     """缩放平移变换层（Scale and shift）
@@ -109,6 +103,124 @@ class ScaleShift(Layer):
         x_outs = K.exp(self.log_scale) * inputs + self.shift
         return x_outs
 
+
+class MyBidirectional:
+    """自己封装双向RNN，允许传入mask，保证对齐
+    """
+    def __init__(self, layer):
+        self.forward_layer = copy.copy(layer)
+        self.backward_layer = copy.copy(layer)
+        self.forward_layer.name = 'forward_' + self.forward_layer.name
+        self.backward_layer.name = 'backward_' + self.backward_layer.name
+    def reverse_sequence(self, inputs):
+        """这里的mask.shape是[batch_size, seq_len, 1]
+        """
+        x, mask = inputs
+        seq_len = K.round(K.sum(mask, 1)[:, 0])
+        seq_len = K.cast(seq_len, 'int32')
+        return K.tf.reverse_sequence(x, seq_len, seq_dim=1)
+    def __call__(self, inputs):
+        x, mask = inputs
+        x_forward = self.forward_layer(x)
+        x_backward = Lambda(self.reverse_sequence)([x, mask])
+        x_backward = self.backward_layer(x_backward)
+        x_backward = Lambda(self.reverse_sequence)([x_backward, mask])
+        x = Concatenate()([x_forward, x_backward])
+        x = Lambda(lambda x: x[0] * x[1])([x, mask])
+        return x
+
+
+class Attention(Layer):
+    """多头注意力机制
+    """
+    def __init__(self, nb_head, size_per_head, mask_right=False, **kwargs):
+        super(Attention, self).__init__(**kwargs)
+        self.nb_head = nb_head
+        self.size_per_head = size_per_head
+        self.out_dim = nb_head * size_per_head
+        self.mask_right = mask_right
+    def build(self, input_shape):
+        super(Attention, self).build(input_shape)
+        q_in_dim = input_shape[0][-1]
+        k_in_dim = input_shape[1][-1]
+        v_in_dim = input_shape[2][-1]
+        self.q_kernel = self.add_weight(name='q_kernel',
+                                        shape=(q_in_dim, self.out_dim),
+                                        initializer='glorot_normal')
+        self.k_kernel = self.add_weight(name='k_kernel',
+                                        shape=(k_in_dim, self.out_dim),
+                                        initializer='glorot_normal')
+        self.v_kernel = self.add_weight(name='w_kernel',
+                                        shape=(v_in_dim, self.out_dim),
+                                        initializer='glorot_normal')
+    def mask(self, x, mask, mode='mul'):
+        if mask is None:
+            return x
+        else:
+            for _ in range(K.ndim(x) - K.ndim(mask)):
+                mask = K.expand_dims(mask, K.ndim(mask))
+            if mode == 'mul':
+                return x * mask
+            else:
+                return x - (1 - mask) * 1e10
+    def call(self, inputs):
+        q, k, v = inputs[:3]
+        v_mask, q_mask = None, None
+        if len(inputs) > 3:
+            v_mask = inputs[3]
+            if len(inputs) > 4:
+                q_mask = inputs[4]
+        # 线性变化
+        qw = K.dot(q, self.q_kernel)
+        kw = K.dot(k, self.k_kernel)
+        vw = K.dot(v, self.v_kernel)
+        # 形状变换
+        qw = K.reshape(qw, (-1, K.shape(qw)[1], self.nb_head, self.size_per_head))
+        kw = K.reshape(kw, (-1, K.shape(kw)[1], self.nb_head, self.size_per_head))
+        vw = K.reshape(vw, (-1, K.shape(vw)[1], self.nb_head, self.size_per_head))
+        # 维度置换
+        qw = K.permute_dimensions(qw, (0, 2, 1, 3))
+        kw = K.permute_dimensions(kw, (0, 2, 1, 3))
+        vw = K.permute_dimensions(vw, (0, 2, 1, 3))
+        # Attention
+        a = K.batch_dot(qw, kw, [3, 3]) / self.size_per_head**0.5
+        a = K.permute_dimensions(a, (0, 3, 2, 1))
+        a = self.mask(a, v_mask, 'add')
+        a = K.permute_dimensions(a, (0, 3, 2, 1))
+        if self.mask_right:
+            ones = K.ones_like(a[:1, :1])
+            mask = (ones - K.tf.matrix_band_part(ones, -1, 0)) * 1e10
+            a = a - mask
+        a = K.softmax(a)
+        # 完成输出
+        o = K.batch_dot(a, vw, [3, 2])
+        o = K.permute_dimensions(o, (0, 2, 1, 3))
+        o = K.reshape(o, (-1, K.shape(o)[1], self.out_dim))
+        o = self.mask(o, q_mask, 'mul')
+        return o
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0][0], input_shape[0][1], self.out_dim)
+
+
+def seq_maxpool(x):
+    """seq是[None, seq_len, s_size]的格式，
+    mask是[None, seq_len, 1]的格式，先除去mask部分，
+    然后再做maxpooling。
+    """
+    seq, mask = x
+    seq -= (1 - mask) * 1e10
+    return K.max(seq, 1, keepdims=True)
+
+
+# 搭建seq2seq模型
+
+x_in = Input(shape=(None,))
+y_in = Input(shape=(None,))
+x, y = x_in, y_in
+
+x_mask = Lambda(lambda x: K.cast(K.greater(K.expand_dims(x, 2), 0), 'float32'))(x)
+y_mask = Lambda(lambda x: K.cast(K.greater(K.expand_dims(x, 2), 0), 'float32'))(y)
+
 x_one_hot = Lambda(to_one_hot)([x, x_mask])
 x_prior = ScaleShift()(x_one_hot) # 学习输出的先验分布（标题的字词很可能在文章出现过）
 
@@ -117,42 +229,18 @@ x = embedding(x)
 y = embedding(y)
 
 # encoder，双层双向LSTM
-x = Bidirectional(CuDNNLSTM(char_size // 2, return_sequences=True))(x)
-x = Bidirectional(CuDNNLSTM(char_size // 2, return_sequences=True))(x)
+x = MyBidirectional(CuDNNLSTM(char_size // 2, return_sequences=True))([x, x_mask])
+x = MyBidirectional(CuDNNLSTM(char_size // 2, return_sequences=True))([x, x_mask])
+x_max = Lambda(seq_maxpool)([x, x_mask])
 
 # decoder，双层单向LSTM
 y = CuDNNLSTM(char_size, return_sequences=True)(y)
 y = CuDNNLSTM(char_size, return_sequences=True)(y)
 
-class Interact(Layer):
-    """交互层，负责融合encoder和decoder的信息
-    """
-    def __init__(self, **kwargs):
-        super(Interact, self).__init__(**kwargs)
-    def build(self, input_shape):
-        in_dim = input_shape[0][-1]
-        out_dim = input_shape[1][-1]
-        self.kernel = self.add_weight(name='kernel',
-                                      shape=(in_dim, out_dim),
-                                      initializer='glorot_normal')
-    def call(self, inputs):
-        q, v, v_mask = inputs
-        k = v
-        mv = K.max(v - (1. - v_mask) * 1e10, axis=1, keepdims=True) # maxpooling1d
-        mv = mv + K.zeros_like(q[:,:,:1]) # 将mv重复至“q的timesteps”份
-        # 下面几步只是实现了一个乘性attention
-        qw = K.dot(q, self.kernel)
-        a = K.batch_dot(qw, k, [2, 2]) / 10.
-        a -= (1. - K.permute_dimensions(v_mask, [0, 2, 1])) * 1e10
-        a = K.softmax(a)
-        o = K.batch_dot(a, v, [2, 1])
-        # 将各步结果拼接
-        return K.concatenate([o, q, mv], 2)
-    def compute_output_shape(self, input_shape):
-        return (None, input_shape[0][1],
-                input_shape[0][2]+input_shape[1][2]*2)
+x_max = Lambda(lambda x: K.tile(x[0], [1, K.shape(x[1])[1], 1]))([x_max, y])
+y_att = Attention(8, 16)([y, x, x, x_mask])
+xy = Concatenate()([y, x_max, y_att])
 
-xy = Interact()([y, x, x_mask])
 xy = Dense(512, activation='relu')(xy)
 xy = Dense(len(chars)+4)(xy)
 xy = Lambda(lambda x: (x[0]+x[1])/2)([xy, x_prior]) # 与先验结果平均
@@ -202,8 +290,8 @@ def gen_title(s, topk=3, maxlen=50):
     return id2str(yid[np.argmax(scores)])
 
 
-s1 = u'夏天来临，皮肤在强烈紫外线的照射下，晒伤不可避免，因此，晒后及时修复显得尤为重要，否则可能会造成长期伤害。专家表示，选择晒后护肤品要慎重，芦荟凝胶是最安全，有效的一种选择，晒伤严重者，还请及时就医。'
-s2 = u'8月28日，网络爆料称，华住集团旗下连锁酒店用户数据疑似发生泄露。从卖家发布的内容看，数据包含华住旗下汉庭、禧玥、桔子、宜必思等10余个品牌酒店的住客信息。泄露的信息包括华住官网注册资料、酒店入住登记的身份信息及酒店开房记录，住客姓名、手机号、邮箱、身份证号、登录账号密码等。卖家对这个约5亿条数据打包出售。第三方安全平台威胁猎人对信息出售者提供的三万条数据进行验证，认为数据真实性非常高。当天下午，华住集团发声明称，已在内部迅速开展核查，并第一时间报警。当晚，上海警方消息称，接到华住集团报案，警方已经介入调查。'
+s1 = u'夏天来临，皮肤在强烈紫外线的照射下，晒伤不可避免，因此，晒后及时修复显得尤为重要，否则可能会造成长期伤害。专家表示，选择晒后护肤品要慎重，芦荟凝胶是最安全，有效的一种选择，晒伤严重者，还请及时就医 。'
+s2 = u'8月28日，网络爆料称，华住集团旗下连锁酒店用户数据疑似发生泄露。从卖家发布的内容看，数据包含华住旗下汉庭、禧玥、桔子、宜必思等10余个品牌酒店的住客信息。泄露的信息包括华住官网注册资料、酒店入住登记的身份信息及酒店开房记录，住客姓名、手机号、邮箱、身份证号、登录账号密码等。卖家对这个约5亿条数据打包出售。第三方安全平台威胁猎人对信息出售者提供的三万条数据进行验证，认为数据真实性非常高。当天下午，华住集 团发声明称，已在内部迅速开展核查，并第一时间报警。当晚，上海警方消息称，接到华住集团报案，警方已经介入调查。'
 
 class Evaluate(Callback):
     def __init__(self):
@@ -224,4 +312,3 @@ model.fit_generator(data_generator(),
                     steps_per_epoch=1000,
                     epochs=epochs,
                     callbacks=[evaluator])
-
