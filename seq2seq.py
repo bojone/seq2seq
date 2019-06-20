@@ -6,6 +6,7 @@ from tqdm import tqdm
 import os,json
 import uniout
 from keras.layers import *
+from keras_layer_normalization import LayerNormalization
 from keras.models import Model
 from keras import backend as K
 from keras.callbacks import Callback
@@ -17,6 +18,7 @@ maxlen = 400
 batch_size = 64
 epochs = 100
 char_size = 128
+z_dim = 128
 db = pymongo.MongoClient().text.thucnews # 我的数据存在mongodb中
 
 
@@ -89,7 +91,7 @@ class OurLayer(Layer):
             self._non_trainable_weights.extend(layer._non_trainable_weights)
         return layer.call(*args, **kwargs)
 
- 
+
 def to_one_hot(x):
     """输出一个词表大小的向量，来标记该词是否在文章出现过
     """
@@ -119,6 +121,21 @@ class ScaleShift(Layer):
         return x_outs
 
 
+class OurLayer(Layer):
+    """定义新的Layer，增加reuse方法，允许在定义Layer时调用现成的层
+    """
+    def reuse(self, layer, *args, **kwargs):
+        if not layer.built:
+            layer.name = '%s_for_%s' % (layer.name, self.name)
+            if len(args) > 0:
+                layer.build(K.int_shape(args[0]))
+            else:
+                layer.build(K.int_shape(kwargs['inputs']))
+            self._trainable_weights.extend(layer._trainable_weights)
+            self._non_trainable_weights.extend(layer._non_trainable_weights)
+        return layer.call(*args, **kwargs)
+
+
 class OurBidirectional(OurLayer):
     """自己封装双向RNN，允许传入mask，保证对齐
     """
@@ -144,6 +161,55 @@ class OurBidirectional(OurLayer):
         return x * mask
     def compute_output_shape(self, input_shape):
         return (None, input_shape[0][1], self.forward_layer.units * 2)
+
+
+def seq_avgpool(x):
+    """seq是[None, seq_len, s_size]的格式，
+    mask是[None, seq_len, 1]的格式，先除去mask部分，
+    然后再做avgpooling。
+    """
+    seq, mask = x
+    return K.sum(seq * mask, 1) / (K.sum(mask, 1) + 1e-6)
+
+
+def seq_maxpool(x):
+    """seq是[None, seq_len, s_size]的格式，
+    mask是[None, seq_len, 1]的格式，先除去mask部分，
+    然后再做maxpooling。
+    """
+    seq, mask = x
+    seq -= (1 - mask) * 1e10
+    return K.max(seq, 1)
+
+
+class SelfModulatedLayerNormalization(OurLayer):
+    """模仿Self-Modulated Batch Normalization，
+    只不过降Batch Normalization改为Layer Normalization
+    """
+    def __init__(self, num_hidden, **kwargs):
+        super(SelfModulatedLayerNormalization, self).__init__(**kwargs)
+        self.num_hidden = num_hidden
+    def build(self, input_shape):
+        super(SelfModulatedLayerNormalization, self).build(input_shape)
+        output_dim = input_shape[0][-1]
+        self.layernorm = LayerNormalization(center=False, scale=False)
+        self.beta_dense_1 = Dense(self.num_hidden, activation='relu')
+        self.beta_dense_2 = Dense(output_dim)
+        self.gamma_dense_1 = Dense(self.num_hidden, activation='relu')
+        self.gamma_dense_2 = Dense(output_dim)
+    def call(self, inputs):
+        inputs, cond = inputs
+        inputs = self.reuse(self.layernorm, inputs)
+        beta = self.reuse(self.beta_dense_1, cond)
+        beta = self.reuse(self.beta_dense_2, beta)
+        gamma = self.reuse(self.gamma_dense_1, cond)
+        gamma = self.reuse(self.gamma_dense_2, gamma)
+        for _ in range(K.ndim(inputs) - K.ndim(cond)):
+            beta = K.expand_dims(beta, 1)
+            gamma = K.expand_dims(gamma, 1)
+        return inputs * (gamma + 1) + beta
+    def compute_output_shape(self, input_shape):
+        return input_shape[0]
 
 
 class Attention(OurLayer):
@@ -211,16 +277,6 @@ class Attention(OurLayer):
         return (input_shape[0][0], input_shape[0][1], self.out_dim)
 
 
-def seq_maxpool(x):
-    """seq是[None, seq_len, s_size]的格式，
-    mask是[None, seq_len, 1]的格式，先除去mask部分，
-    然后再做maxpooling。
-    """
-    seq, mask = x
-    seq -= (1 - mask) * 1e10
-    return K.max(seq, 1, keepdims=True)
-
-
 # 搭建seq2seq模型
 
 x_in = Input(shape=(None,))
@@ -238,19 +294,26 @@ x = embedding(x)
 y = embedding(y)
 
 # encoder，双层双向LSTM
-x = OurBidirectional(CuDNNLSTM(char_size // 2, return_sequences=True))([x, x_mask])
-x = OurBidirectional(CuDNNLSTM(char_size // 2, return_sequences=True))([x, x_mask])
+x = LayerNormalization()(x)
+x = OurBidirectional(CuDNNLSTM(z_dim // 2, return_sequences=True))([x, x_mask])
+x = LayerNormalization()(x)
+x = OurBidirectional(CuDNNLSTM(z_dim // 2, return_sequences=True))([x, x_mask])
 x_max = Lambda(seq_maxpool)([x, x_mask])
 
 # decoder，双层单向LSTM
-y = CuDNNLSTM(char_size, return_sequences=True)(y)
-y = CuDNNLSTM(char_size, return_sequences=True)(y)
+y = SelfModulatedLayerNormalization(z_dim // 4)([y, x_max])
+y = CuDNNLSTM(z_dim, return_sequences=True)(y)
+y = SelfModulatedLayerNormalization(z_dim // 4)([y, x_max])
+y = CuDNNLSTM(z_dim, return_sequences=True)(y)
+y = SelfModulatedLayerNormalization(z_dim // 4)([y, x_max])
 
-x_max = Lambda(lambda x: K.tile(x[0], [1, K.shape(x[1])[1], 1]))([x_max, y])
-y_att = Attention(8, 16)([y, x, x, x_mask])
-xy = Concatenate()([y, x_max, y_att])
+# attention交互
+xy = Attention(8, 16)([y, x, x, x_mask])
+xy = Concatenate()([y, xy])
 
-xy = Dense(512, activation='relu')(xy)
+# 输出分类
+xy = Dense(char_size)(xy)
+xy = LeakyReLU(0.2)(xy)
 xy = Dense(len(chars)+4)(xy)
 xy = Lambda(lambda x: (x[0]+x[1])/2)([xy, x_prior]) # 与先验结果平均
 xy = Activation('softmax')(xy)
