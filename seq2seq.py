@@ -325,7 +325,7 @@ model.add_loss(cross_entropy)
 model.compile(optimizer=Adam(1e-3))
 
 
-def gen_sent(s, topk=3, maxlen=50):
+def gen_sent(s, topk=3, maxlen=32):
     """beam search解码
     每次只保留topk个最优候选结果；如果topk=1，那么就是贪心搜索
     """
