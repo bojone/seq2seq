@@ -82,7 +82,6 @@ class OurLayer(Layer):
     """
     def reuse(self, layer, *args, **kwargs):
         if not layer.built:
-            layer.name = '%s_for_%s' % (layer.name, self.name)
             if len(args) > 0:
                 layer.build(K.int_shape(args[0]))
             else:
