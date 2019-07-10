@@ -112,12 +112,22 @@ class OurLayer(Layer):
     def reuse(self, layer, *args, **kwargs):
         if not layer.built:
             if len(args) > 0:
-                layer.build(K.int_shape(args[0]))
+                inputs = args[0]
             else:
-                layer.build(K.int_shape(kwargs['inputs']))
-            self._trainable_weights.extend(layer._trainable_weights)
-            self._non_trainable_weights.extend(layer._non_trainable_weights)
-        return layer.call(*args, **kwargs)
+                inputs = kwargs['inputs']
+            if isinstance(inputs, list):
+                input_shape = [K.int_shape(x) for x in inputs]
+            else:
+                input_shape = K.int_shape(inputs)
+            layer.build(input_shape)
+        outputs = layer.call(*args, **kwargs)
+        for w in layer._trainable_weights:
+            if w not in self._trainable_weights:
+                self._trainable_weights.append(w)
+        for w in layer._non_trainable_weights:
+            if w not in self._non_trainable_weights:
+                self._non_trainable_weights.append(w)
+        return outputs
 
 
 class OurBidirectional(OurLayer):
