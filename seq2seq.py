@@ -121,10 +121,10 @@ class OurLayer(Layer):
                 input_shape = K.int_shape(inputs)
             layer.build(input_shape)
         outputs = layer.call(*args, **kwargs)
-        for w in layer._trainable_weights:
+        for w in layer.trainable_weights:
             if w not in self._trainable_weights:
                 self._trainable_weights.append(w)
-        for w in layer._non_trainable_weights:
+        for w in layer.non_trainable_weights:
             if w not in self._non_trainable_weights:
                 self._non_trainable_weights.append(w)
         return outputs
