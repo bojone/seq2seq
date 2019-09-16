@@ -149,17 +149,20 @@ class OurBidirectional(OurLayer):
         """
         seq_len = K.round(K.sum(mask, 1)[:, 0])
         seq_len = K.cast(seq_len, 'int32')
-        return K.tf.reverse_sequence(x, seq_len, seq_dim=1)
+        return tf.reverse_sequence(x, seq_len, seq_dim=1)
     def call(self, inputs):
         x, mask = inputs
         x_forward = self.reuse(self.forward_layer, x)
         x_backward = self.reverse_sequence(x, mask)
         x_backward = self.reuse(self.backward_layer, x_backward)
         x_backward = self.reverse_sequence(x_backward, mask)
-        x = K.concatenate([x_forward, x_backward], 2)
-        return x * mask
+        x = K.concatenate([x_forward, x_backward], -1)
+        if K.ndim(x) == 3:
+            return x * mask
+        else:
+            return x
     def compute_output_shape(self, input_shape):
-        return (None, input_shape[0][1], self.forward_layer.units * 2)
+        return input_shape[0][:-1] + (self.forward_layer.units * 2,)
 
 
 def seq_avgpool(x):
