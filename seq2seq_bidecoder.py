@@ -138,20 +138,6 @@ class ScaleShift(Layer):
         return x_outs
 
 
-class OurLayer(Layer):
-    """定义新的Layer，增加reuse方法，允许在定义Layer时调用现成的层
-    """
-    def reuse(self, layer, *args, **kwargs):
-        if not layer.built:
-            if len(args) > 0:
-                layer.build(K.int_shape(args[0]))
-            else:
-                layer.build(K.int_shape(kwargs['inputs']))
-            self._trainable_weights.extend(layer._trainable_weights)
-            self._non_trainable_weights.extend(layer._non_trainable_weights)
-        return layer.call(*args, **kwargs)
-
-
 class OurBidirectional(OurLayer):
     """自己封装双向RNN，允许传入mask，保证对齐
     """
@@ -166,17 +152,20 @@ class OurBidirectional(OurLayer):
         """
         seq_len = K.round(K.sum(mask, 1)[:, 0])
         seq_len = K.cast(seq_len, 'int32')
-        return K.tf.reverse_sequence(x, seq_len, seq_dim=1)
+        return tf.reverse_sequence(x, seq_len, seq_dim=1)
     def call(self, inputs):
         x, mask = inputs
         x_forward = self.reuse(self.forward_layer, x)
         x_backward = self.reverse_sequence(x, mask)
         x_backward = self.reuse(self.backward_layer, x_backward)
         x_backward = self.reverse_sequence(x_backward, mask)
-        x = K.concatenate([x_forward, x_backward], 2)
-        return x * mask
+        x = K.concatenate([x_forward, x_backward], -1)
+        if K.ndim(x) == 3:
+            return x * mask
+        else:
+            return x
     def compute_output_shape(self, input_shape):
-        return (None, input_shape[0][1], self.forward_layer.units * 2)
+        return input_shape[0][:-1] + (self.forward_layer.units * 2,)
 
 
 def seq_avgpool(x):
