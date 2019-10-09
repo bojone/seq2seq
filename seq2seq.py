@@ -140,8 +140,8 @@ class OurBidirectional(OurLayer):
     """
     def __init__(self, layer, **args):
         super(OurBidirectional, self).__init__(**args)
-        self.forward_layer = copy.deepcopy(layer)
-        self.backward_layer = copy.deepcopy(layer)
+        self.forward_layer = layer.__class__.from_config(layer.get_config())
+        self.backward_layer = layer.__class__.from_config(layer.get_config())
         self.forward_layer.name = 'forward_' + self.forward_layer.name
         self.backward_layer.name = 'backward_' + self.backward_layer.name
     def reverse_sequence(self, x, mask):
