@@ -149,7 +149,7 @@ class OurBidirectional(OurLayer):
         """
         seq_len = K.round(K.sum(mask, 1)[:, 0])
         seq_len = K.cast(seq_len, 'int32')
-        return tf.reverse_sequence(x, seq_len, seq_dim=1)
+        return K.tf.reverse_sequence(x, seq_len, seq_dim=1)
     def call(self, inputs):
         x, mask = inputs
         x_forward = self.reuse(self.forward_layer, x)
@@ -186,7 +186,7 @@ def seq_maxpool(x):
 
 class SelfModulatedLayerNormalization(OurLayer):
     """模仿Self-Modulated Batch Normalization，
-    只不过降Batch Normalization改为Layer Normalization
+    只不过将Batch Normalization改为Layer Normalization
     """
     def __init__(self, num_hidden, **kwargs):
         super(SelfModulatedLayerNormalization, self).__init__(**kwargs)
