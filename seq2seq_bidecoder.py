@@ -405,28 +405,19 @@ def gen_sent(s, topk=3, maxlen=64):
         yr_id = np.array(_yr_id)
         l_scores = np.array(_l_scores)
         r_scores = np.array(_r_scores)
-        l_ends = np.where(yl_id[:, -1] == 3)[0]
-        r_ends = np.where(yr_id[:, -1] == 3)[0]
-        if len(l_ends) > 0 and len(r_ends) == 0:
-            k = l_scores[l_ends].argmax()
-            return id2str(yl_id[l_ends[k]])
-        if len(l_ends) == 0 and len(r_ends) > 0:
-            k = r_scores[r_ends].argmax()
-            return id2str(yr_id[r_ends[k]][::-1])
-        if len(l_ends) > 0 and len(r_ends) > 0:
-            lk = l_scores[l_ends].argmax()
-            rk = r_scores[r_ends].argmax()
-            if l_scores[l_ends][lk] > r_scores[r_ends][rk]:
-                return id2str(yl_id[l_ends[lk]])
-            else:
-                return id2str(yr_id[r_ends[rk]][::-1])
+        l_best_one = np.argmax(l_scores)
+        r_best_one = np.argmax(r_scores)
+        if yl_id[l_best_one][-1] == 3 and l_scores[l_best_one] >= r_scores[r_best_one]:
+            return id2str(yl_id[l_best_one])
+        if yr_id[r_best_one][-1] == 3 and r_scores[r_best_one] >= l_scores[l_best_one]:
+            return id2str(yr_id[r_best_one][::-1)
     # 如果maxlen字都找不到<end>，直接返回
-    lk = l_scores.argmax()
-    rk = r_scores.argmax()
-    if l_scores[lk] > r_scores[rk]:
-        return id2str(yl_id[lk])
+    l_best_one = l_scores.argmax()
+    r_best_one = r_scores.argmax()
+    if l_scores[l_best_one] >= r_scores[r_best_one]:
+        return id2str(yl_id[l_best_one])
     else:
-        return id2str(yr_id[rk][::-1])
+        return id2str(yr_id[r_best_one][::-1])
 
 
 s1 = u'夏天来临，皮肤在强烈紫外线的照射下，晒伤不可避免，因此，晒后及时修复显得尤为重要，否则可能会造成长期伤害。专家表示，选择晒后护肤品要慎重，芦荟凝胶是最安全，有效的一种选择，晒伤严重者，还请及时就医 。'
