@@ -405,8 +405,8 @@ def gen_sent(s, topk=3, maxlen=64):
         yr_id = np.array(_yr_id)
         l_scores = np.array(_l_scores)
         r_scores = np.array(_r_scores)
-        l_best_one = np.argmax(l_scores)
-        r_best_one = np.argmax(r_scores)
+        l_best_one = l_scores.argmax()
+        r_best_one = r_scores.argmax()
         if yl_id[l_best_one][-1] == 3 and l_scores[l_best_one] >= r_scores[r_best_one]:
             return id2str(yl_id[l_best_one])
         if yr_id[r_best_one][-1] == 3 and r_scores[r_best_one] >= l_scores[l_best_one]:
