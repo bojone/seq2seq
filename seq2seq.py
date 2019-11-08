@@ -356,10 +356,9 @@ def gen_sent(s, topk=3, maxlen=64):
             _scores = [_scores[k] for k in _arg_topk]
         yid = np.array(_yid)
         scores = np.array(_scores)
-        ends = np.where(yid[:, -1] == 3)[0]
-        if len(ends) > 0:
-            k = ends[scores[ends].argmax()]
-            return id2str(yid[k])
+        best_one = np.argmax(scores)
+        if yid[best_one][-1] == 3:
+            return id2str(yid[best_one])
     # 如果maxlen字都找不到<end>，直接返回
     return id2str(yid[np.argmax(scores)])
 
