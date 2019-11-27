@@ -6,6 +6,8 @@ import pymongo
 from tqdm import tqdm
 import os,json
 import uniout
+import tensorflow as tf
+import keras
 from keras.layers import *
 from keras_layer_normalization import LayerNormalization
 from keras.models import Model
@@ -95,17 +97,18 @@ class OurLayer(Layer):
                 input_shape = K.int_shape(inputs)
             layer.build(input_shape)
         outputs = layer.call(*args, **kwargs)
-        for w in layer.trainable_weights:
-            if w not in self._trainable_weights:
-                self._trainable_weights.append(w)
-        for w in layer.non_trainable_weights:
-            if w not in self._non_trainable_weights:
-                self._non_trainable_weights.append(w)
-        for u in layer.updates:
-            if not hasattr(self, '_updates'):
-                self._updates = []
-            if u not in self._updates:
-                self._updates.append(u)
+        if not keras.__version__.startswith('2.3.'):
+            for w in layer.trainable_weights:
+                if w not in self._trainable_weights:
+                    self._trainable_weights.append(w)
+            for w in layer.non_trainable_weights:
+                if w not in self._non_trainable_weights:
+                    self._non_trainable_weights.append(w)
+            for u in layer.updates:
+                if not hasattr(self, '_updates'):
+                    self._updates = []
+                if u not in self._updates:
+                    self._updates.append(u)
         return outputs
 
 
@@ -263,7 +266,7 @@ class Attention(OurLayer):
         kw = K.permute_dimensions(kw, (0, 2, 1, 3))
         vw = K.permute_dimensions(vw, (0, 2, 1, 3))
         # Attention
-        a = K.batch_dot(qw, kw, [3, 3]) / self.key_size**0.5
+        a = tf.einsum('ijkl,ijml->ijkm', qw, kw) / self.key_size**0.5
         a = K.permute_dimensions(a, (0, 3, 2, 1))
         a = self.mask(a, v_mask, 'add')
         a = K.permute_dimensions(a, (0, 3, 2, 1))
@@ -273,7 +276,7 @@ class Attention(OurLayer):
             a = a - mask
         a = K.softmax(a)
         # 完成输出
-        o = K.batch_dot(a, vw, [3, 2])
+        o = tf.einsum('ijkl,ijlm->ijkm', a, vw)
         o = K.permute_dimensions(o, (0, 2, 1, 3))
         o = K.reshape(o, (-1, K.shape(o)[1], self.out_dim))
         o = self.mask(o, q_mask, 'mul')
